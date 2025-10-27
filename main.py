@@ -1,13 +1,13 @@
-import pandas as pd 
-import numpy as np 
-import matplotlib.pyplot as plt 
-import seaborn as sns 
-from collections import Counter 
-import nltk 
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+from collections import Counter
+import nltk
 from nltk.corpus import stopwords
 from nltk.tokenize import word_tokenize
-import warnings 
-import re 
+import warnings
+import re
 from wordcloud import WordCloud
 import gensim.downloader as api
 from gensim.models import TfidfModel
@@ -15,26 +15,20 @@ import gensim.corpora
 from gensim.corpora import Dictionary
 warnings.filterwarnings('ignore')
 
-nltk.download('punkt')
-nltk.download('stopwords')
-nltk.download('averaged_perceptron_tagger')
+# --- Constants ---
+CATEGORIES = ['hate_speech', 'offensive_language', 'neither']
+CLASS_LABELS = {
+    0: 'hate_speech',
+    1: 'offensive_language',
+    2: 'neither'
+}
 
-
-df = pd.read_csv('reddit_hate_speech.csv')
-
-print("Dataset shape: ", df.shape)
-print("\nFirst few rows: ")
-print(df.head())
-
-print("\nColumn names: ")
-print(df.columns)
-
-print("\nData types: ")
-print(df.dtypes)
-
-print("\Class distribution: ")
-print(df['class'].value_counts())
-
+def download_nltk_data():
+    """Download necessary NLTK models."""
+    nltk.download('punkt', quiet=True)
+    nltk.download('stopwords', quiet=True)
+    nltk.download('averaged_perceptron_tagger', quiet=True)
+    return set(stopwords.words('english'))
 
 def clean_text(text):
     """Clean and normalize text"""
@@ -83,31 +77,43 @@ def count_pronouns(tokens):
 
     return pronoun_count 
 
+def load_and_explore_data(filepath):
+    """Load data, print initial exploration, and return DataFrame."""
+    print("--- 1. Data Loading and Exploration ---")
+    df = pd.read_csv(filepath)
+    print(f"Dataset shape: {df.shape}")
+    print(f"\nColumns: {df.columns.tolist()}")
+    print(f"\nData types:\n{df.dtypes}")
+    print(f"\nMissing values:\n{df.isnull().sum()}")
+    print(f"\nClass distribution:\n{df['class'].value_counts()}")
+    return df
 
+def preprocess_data(df, stop_words):
+    """Apply all preprocessing steps to the dataframe."""
+    print("\n--- 2. Data Preprocessing ---")
+    df['category'] = df['class'].map(CLASS_LABELS)
+    print("✓ Added 'category' column.")
 
-categories = ['hate_speech', 'offensive_language', 'neither']
-stop_words = set(stopwords.words('english'))
+    print("Cleaning text...")
+    df['cleaned_tweet'] = df['tweet'].apply(clean_text)
+    print("✓ Cleaned tweets.")
 
-class_labels = {
-    0: 'hate_speech',
-    1: 'offensive_language',
-    2: 'neither'
-}
+    print("Tokenizing text...")
+    df['tokens'] = df['cleaned_tweet'].apply(get_tokens)
+    df['tokens_no_stop'] = df['tokens'].apply(lambda tokens: [t for t in tokens if t not in stop_words])
+    print("✓ Tokenized tweets and removed stopwords.")
 
-# Add category name column 
-df['category'] = df['class'].map(class_labels)
-print(f"Category distribution: ")
-print(df['category'].value_counts())
+    print("Counting pronouns...")
+    df['pronoun_count'] = df['tokens'].apply(count_pronouns)
+    print("✓ Counted pronouns.")
+    
+    return df
 
-# Check if there is missing values
-print(f"Missing values: ")
-print(df.isnull().sum())
-
-def get_top_frequent_words(n=30):
+def get_top_frequent_words(df, stop_words, n=30):
     top_30_words = {}
     print("\nExtracting top {n} frequent words per category...")
 
-    for category in categories:
+    for category in CATEGORIES:
         # Get all tokens for this category (already computed earlier)
         # But we need to recompute with top 30
         category_df = df[df['category'] == category]
@@ -137,14 +143,13 @@ def get_top_frequent_words(n=30):
 
     
 
-def task1_vocalubary_statistical_analysis():
-    """Main function for Task 1"""
-
-    
+def calculate_vocabulary_stats(df):
+    """Calculate vocabulary and token statistics for each category."""
+    print("\n--- 3. Vocabulary and Statistical Analysis ---")
     results = {}
     
-    for category in categories:
-        print(f"Processing: {category}")
+    for category in CATEGORIES:
+        print(f"Processing: {category.replace('_', ' ').title()}")
 
         # Filter tweets for this category
         category_df = df[df['category'] == category]
@@ -152,23 +157,10 @@ def task1_vocalubary_statistical_analysis():
         all_tokens = []
         pronoun_counts = []
         token_counts = []
-        for idx, tweet in enumerate(category_df['tweet']):
-            # Clean the text
-            cleaned = clean_text(tweet)
 
-            # Tokenize 
-            tokens = get_tokens(cleaned)
-
-            # Store tokens
-            all_tokens.extend(tokens)
-
-            token_counts.append(len(tokens))
-
-            pronoun_count = count_pronouns(tokens)
-            pronoun_counts.append(pronoun_count)
-
-            if (idx + 1) % 5000 == 0:
-                print(f"Processed {idx + 1}/{len(category_df)} tweets")
+        all_tokens = [token for token_list in category_df['tokens'] for token in token_list]
+        token_counts = category_df['tokens'].apply(len)
+        pronoun_counts = category_df['pronoun_count']
             
         vocabulary = set(all_tokens)
         vocabulary_size = len(vocabulary)
@@ -180,7 +172,7 @@ def task1_vocalubary_statistical_analysis():
         avg_pronouns = np.mean(pronoun_counts)
         std_pronouns = np.std(pronoun_counts)
 
-        tokens_no_stop = [token for token in all_tokens if token not in stop_words]
+        tokens_no_stop = [token for token_list in category_df['tokens_no_stop'] for token in token_list]
 
         word_freq = Counter(tokens_no_stop)
         most_common_30 = word_freq.most_common(30)
@@ -195,15 +187,15 @@ def task1_vocalubary_statistical_analysis():
             'top_30_words': most_common_30,
             'num_posts': len(category_df)
         }
+    return results
 
-    # Create summary table
+def print_stats_summary_table(results):
+    """Prints a formatted summary table of the vocabulary statistics."""
     print("\n" + "="*80)
-    print("Task 1: Vocabulary and Statistcal Analysis")
+    print("Vocabulary and Statistical Analysis Summary")
     print("="*80)
-    
     summary_data = []
-    for category in categories:
-        print(f"result category: {results.keys()}")
+    for category in CATEGORIES:
         stats = results[category]
         summary_data.append({
             'Category': category.replace("_", " ").title(),
@@ -217,21 +209,20 @@ def task1_vocalubary_statistical_analysis():
         })
     
     summary_df = pd.DataFrame(summary_data)
+    print(summary_df.to_string(index=False))
 
-    print(f"\n" + summary_df.to_string(index=False))
-
-    print("\n" + "="*80)
-    print("Create visualization")
-    print("="*80)
-
+def plot_statistical_summary(results):
+    """Creates and shows a 2x2 plot of vocabulary statistics."""
+    print("\nGenerating statistical plots...")
     sns.set_style('whitegrid')
     fig, axes = plt.subplots(2, 2, figsize=(15,10))
+    fig.suptitle("Vocabulary and Linguistic Analysis by Category", fontsize=16, fontweight='bold')
 
     # Prepare data
-    categories_display = [cat.replace('_', ' ').title() for cat in categories]
+    categories_display = [cat.replace('_', ' ').title() for cat in CATEGORIES]
 
     ax1 = axes[0, 0]
-    vocabs_size = [results[category]['vocabulary_size'] for category in categories]
+    vocabs_size = [results[category]['vocabulary_size'] for category in CATEGORIES]
     bars1 = ax1.bar(categories_display, vocabs_size, color=['#e74c3c', '#f39c12', '#27ae60'], edgecolor='black', linewidth=1.5)
     ax1.set_title('Vocabulary Size by Category', fontsize=14, fontweight='bold')
     ax1.set_ylabel('Vocabulary Size', fontsize=12)
@@ -244,8 +235,8 @@ def task1_vocalubary_statistical_analysis():
     
     
     ax2= axes[0, 1]
-    avg_tokens = [results[category]['avg_tokens_per_post'] for category in categories]
-    std_tokens = [results[category]['std_tokens_per_post'] for cateogry in categories]
+    avg_tokens = [results[category]['avg_tokens_per_post'] for category in CATEGORIES]
+    std_tokens = [results[cateogry]['std_tokens_per_post'] for cateogry in CATEGORIES]
     bars2 = ax2.bar(categories_display, avg_tokens, yerr=std_tokens, color=['#e74c3c', '#f39c12', '#27ae60'], edgecolor='black', linewidth=1.5, capsize=5)
     ax2.set_title("Average Tokens Per Tweet", fontsize=14, fontweight='bold')
     ax2.set_ylabel("Number of Tokens", fontsize=12)
@@ -253,8 +244,8 @@ def task1_vocalubary_statistical_analysis():
     ax2.grid(axis='y', alpha=0.3)
 
     ax3 = axes[1, 0]
-    avg_pronouns = [results[cat]['avg_pronouns_per_post'] for cat in categories]
-    std_pronouns = [results[cat]['std_pronouns_per_post'] for cat in categories]
+    avg_pronouns = [results[cat]['avg_pronouns_per_post'] for cat in CATEGORIES]
+    std_pronouns = [results[cat]['std_pronouns_per_post'] for cat in CATEGORIES]
     bars3 = ax3.bar(categories_display, avg_pronouns, yerr=std_pronouns,
                 color=['#e74c3c', '#f39c12', '#27ae60'], 
                 edgecolor='black', linewidth=1.5, capsize=5)
@@ -265,7 +256,7 @@ def task1_vocalubary_statistical_analysis():
 
     # Type-Token Ratio
     ax4 = axes[1,1]
-    ttr = [results[cat]['vocabulary_size'] / results[cat]['total_tokens'] for cat in categories]
+    ttr = [results[cat]['vocabulary_size'] / results[cat]['total_tokens'] for cat in CATEGORIES]
     bars4 = ax4.bar(categories_display, ttr, color=['#e74c3c', '#f39c12', '#27ae60'], edgecolor='black', linewidth=1.5)
     ax4.set_title('Type-Token Ratio (Lexical Diversity)', fontsize=14, fontweight='bold')
     ax4.set_ylabel('Ratio (Vocabulary / Tokens)', fontsize=12)
@@ -279,23 +270,22 @@ def task1_vocalubary_statistical_analysis():
              ha='center', va='bottom', fontsize=10)
         
     plt.tight_layout()
-    # plt.show()
+    plt.show()
 
+def analyze_category_balance(results):
+    """Analyzes and prints the balance of tweet categories in the dataset."""
     print("\n" + "=" * 80)
     print("Category Balance Analysis")
     print("="*80)
 
     category_counts = {}
-    for category in categories: 
+    for category in CATEGORIES: 
         category_counts[category] = results[category]['num_posts']
     
     total_tweets = sum(category_counts.values())
 
     print(f"\nTotal tweets in dataset: {total_tweets:,}")
-    print("\nCategory distribution")
-    print("-"*60)
-
-    for category in categories:
+    for category in CATEGORIES:
         count = category_counts[category]
         percentage = (count / total_tweets) * 100
         cat_display = category.replace('_', ' ').title()
@@ -303,7 +293,7 @@ def task1_vocalubary_statistical_analysis():
         # Visual bar
         bar_length = int(percentage / 2)
         bar = '█' * bar_length
-        print(f"{cat_display:25s}: {count:6,} tweets ({percentage:5.2f}%) {bar}")
+        print(f"{cat_display:<20s}: {count:6,} tweets ({percentage:5.2f}%) {bar}")
 
 
     counts = list(category_counts.values())
@@ -348,20 +338,18 @@ def task1_vocalubary_statistical_analysis():
         print("    → Critical: Advanced balancing techniques required")
 
 
-    # Extract top 30 words for each category (excluding stopwords)
-    top_30_words = get_top_frequent_words(30)
+def display_top_words(top_30_words):
+    """Displays the top 30 most frequent words for each category."""
     print("\n" + "="*60)
     print("Top 30 Most Frequent Tokens for Each Category")
     print("="*60) 
 
-    for cat in categories:
-        cat_display = cat.replace("_", ' ').title()
+    for category in CATEGORIES:
+        cat_display = category.replace("_", ' ').title()
         print(f"\n{cat_display}:")
         print("-"*60)
 
-
         words_list = top_30_words[category]['words_list']
-
         for i in range(0, 30, 3):
             row = []
             for j in range(3):
@@ -370,20 +358,17 @@ def task1_vocalubary_statistical_analysis():
                     count = top_30_words[category]['words_freq'][word]
                     row.append(f"{i+j+1:2d}. {word:15s} ({count:5,})")
             print(" ".join(row))
-    
-    # Calculate overlap between all pairs of categories
-    calculate_category_overlap(results, top_30_words)
-    generate_wordcloud(results, top_30_words)
 
-def calculate_category_overlap(categories_stats, top_30_words):
+def analyze_vocabulary_overlap(top_30_words):
+    """Calculates and interprets the Jaccard similarity of top words between categories."""
     overlap_matrix = {}
-    for category in categories:
+    for category in CATEGORIES:
         overlap_matrix[category] = {}
 
     print("\nJaccard Similarity (Intersection / Union)")
     print("-"*70)
-    for i, cat1 in enumerate(categories):
-        for cat2 in categories[i+1:]:
+    for i, cat1 in enumerate(CATEGORIES):
+        for cat2 in CATEGORIES[i+1:]:
             set1 = top_30_words[cat1]['words_set']
             set2 = top_30_words[cat2]['words_set']
 
@@ -414,8 +399,8 @@ def calculate_category_overlap(categories_stats, top_30_words):
                 print("Shared common word: None")
     
     all_overlap = []
-    for i, cat1 in enumerate(categories):
-        for cat2 in categories[i+1:]:
+    for i, cat1 in enumerate(CATEGORIES):
+        for cat2 in CATEGORIES[i+1:]:
             overlap_count = overlap_matrix[cat1][cat2]
             all_overlap.append(overlap_count)
 
@@ -454,7 +439,7 @@ def calculate_category_overlap(categories_stats, top_30_words):
 
 
 
-def generate_wordcloud(categories_stats, top_30_words):
+def generate_wordclouds(top_30_words):
     color_schemes = {
         'hate_speech': 'Reds',
         'offensive_language': 'Oranges',
@@ -463,7 +448,7 @@ def generate_wordcloud(categories_stats, top_30_words):
 
     fig, axes = plt.subplots(1, 3, figsize=(20, 6))
     
-    for idx, category in enumerate(categories):
+    for idx, category in enumerate(CATEGORIES):
         print(f"Generating wordcloud for category: {category.replace("_", " ").title()}")
 
 
@@ -494,34 +479,26 @@ def generate_wordcloud(categories_stats, top_30_words):
 
 
 
-def task2_tf_idf_category_relevant_tokens_analysis(top_30_words_by_freq):
-    category_tokens = {}
+def task2_tf_idf_category_relevant_tokens_analysis(df, top_30_words_by_freq):
+    """Performs TF-IDF analysis and compares results with frequency-based rankings."""
+    print("\n--- 4. TF-IDF Category-Relevant Token Analysis ---")
     category_documents = {} # Treating each category as one document
 
-    for cat in categories:
+    for cat in CATEGORIES:
         print(f"Processing category: {cat.replace("_", " ").title()}")
-
         category_df = df[df['category'] == cat]
-        all_tokens = []
-        for tweet in category_df['tweet']:
-            cleaned = clean_text(tweet)
-            tokens = get_tokens(cleaned)
-            all_tokens.extend(tokens)
-        
-        tokens_no_stops = [token for token in all_tokens if token not in stopwords.words('english')]
-
-        category_tokens[cat] = tokens_no_stops
+        tokens_no_stops = [token for token_list in category_df['tokens_no_stop'] for token in token_list]
         category_documents[cat] = tokens_no_stops
 
-        print(f"Total tokens (no stop words): {len(all_tokens)}")
-        print(f"Unique tokens: {len(set(all_tokens))}")
+        print(f"  Total tokens (no stop words): {len(tokens_no_stops):,}")
+        print(f"  Unique tokens: {len(set(tokens_no_stops)):,}")
     
 
     # Build gensim dictionary and corpus
     print("\n" + "-"*80)
     print("Build Gensim Dictionary and Corpus")
 
-    documents = [category_documents[cat] for cat in categories]
+    documents = [category_documents[cat] for cat in CATEGORIES]
 
     # Use the Dictionary class imported from gensim.corpora to create the dictionary
     dictionary = Dictionary(documents)
@@ -534,7 +511,7 @@ def task2_tf_idf_category_relevant_tokens_analysis(top_30_words_by_freq):
     corpus = [dictionary.doc2bow(doc) for doc in documents]
     print(f"Corpus created")
     print(f"    Number of documents: {len(corpus)}")
-    for idx, cat in enumerate(categories):
+    for idx, cat in enumerate(CATEGORIES):
         print(f"    {cat.replace("_"," ").title()}: {len(corpus[idx])} unique tokens")
 
     print("\n" + "-"*80)
@@ -550,8 +527,7 @@ def task2_tf_idf_category_relevant_tokens_analysis(top_30_words_by_freq):
     print("\nTF-IDF trained succesfully")
     print("Computing tf-idf csores for each category")
     tfidf_score_by_category = {}
-    for idx, category in enumerate(categories):
-        print(f"what we have here: {corpus_tfidf}")
+    for idx, category in enumerate(CATEGORIES):
         tfidf_vector = corpus_tfidf[idx]
 
         # Convert to dictionary: {token_id: tfidf_score}
@@ -564,7 +540,7 @@ def task2_tf_idf_category_relevant_tokens_analysis(top_30_words_by_freq):
 
         tfidf_score_by_category[category] = word_scores
         cat_display = category.replace("_", " ").title()
-    print(f"    {cat_display}: {len(word_scores)} tokens scored")
+        print(f"    ✓ {cat_display}: {len(word_scores)} tokens scored")
 
 
 
@@ -572,7 +548,7 @@ def task2_tf_idf_category_relevant_tokens_analysis(top_30_words_by_freq):
     print("Extracting Top 30 Tokens by TF-IDF Score")
 
     tfidf_top30 = {}
-    for category in categories:
+    for category in CATEGORIES:
         sorted_tokens = sorted(
             tfidf_score_by_category[category].items(),
             key=lambda x: x[1],
@@ -601,7 +577,7 @@ def task2_tf_idf_category_relevant_tokens_analysis(top_30_words_by_freq):
 
 
     overlap_analysis = {}
-    for category in categories:
+    for category in CATEGORIES:
         freq_set = top_30_words_by_freq[category]['words_set']
         tfidf_set = tfidf_top30[category]['words_set']
 
@@ -651,7 +627,7 @@ def task2_tf_idf_category_relevant_tokens_analysis(top_30_words_by_freq):
     print("="*80)
 
     # Build a list of overlap counts for each category
-    overlap_counts = [overlap_analysis[cat]['overlap_count'] for cat in categories]
+    overlap_counts = [overlap_analysis[cat]['overlap_count'] for cat in CATEGORIES]
     avg_overlap = np.mean(overlap_counts)
     std_overlap = np.std(overlap_counts)
 
@@ -680,10 +656,7 @@ def task2_tf_idf_category_relevant_tokens_analysis(top_30_words_by_freq):
         print("    → Frequent words are often common across categories")
         print("    → TF-IDF better captures category-distinctive vocabulary")
 
-
-top_30_words_by_freq = get_top_frequent_words(30)
-task2_tf_idf_category_relevant_tokens_analysis(top_30_words_by_freq)
-
+# --- Zipf's Law Functions ---
 
 def zipf_law(rank, C, alpha):
     """
@@ -736,3 +709,30 @@ def calculate_adjusted_r_squared(r2, n, p):
     adj_r2 = 1 - ((1 - r2) * (n - 1) / (n - p - 1))
     return adj_r2
 
+def main():
+    """Main function to run the entire analysis pipeline."""
+    # --- Setup ---
+    stop_words = download_nltk_data()
+    
+    # --- Task 1: Vocabulary and Statistical Analysis ---
+    # 1. Load and preprocess data
+    df = load_and_explore_data('reddit_hate_speech.csv')
+    df = preprocess_data(df, stop_words)
+
+    # 2. Calculate and display stats
+    vocabulary_stats = calculate_vocabulary_stats(df)
+    print_stats_summary_table(vocabulary_stats)
+    # plot_statistical_summary(vocabulary_stats)
+
+    # 3. Analyze category balance and vocabulary
+    analyze_category_balance(vocabulary_stats)
+    top_30_freq_words = get_top_frequent_words(df, stop_words, n=30)
+    display_top_words(top_30_freq_words)
+    analyze_vocabulary_overlap(top_30_freq_words)
+    generate_wordclouds(top_30_freq_words)
+
+    # --- Task 2: TF-IDF Analysis ---
+    task2_tf_idf_category_relevant_tokens_analysis(df, top_30_freq_words)
+
+if __name__ == "__main__":
+    main()
