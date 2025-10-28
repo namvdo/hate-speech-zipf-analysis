@@ -1,0 +1,14 @@
+notebook
+nltk
+matplotlib
+pandas
+statsmodels
+scikit-learn
+seaborn
+wordcloud
+emoji
+gensim==4.3.3
+scipy
+spacy
+numpy<2.0.0,>=1.22.4
+contractions
